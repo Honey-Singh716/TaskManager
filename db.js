@@ -1,6 +1,9 @@
 require("dotenv").config();
 
-const { Pool } = require("pg");
+const { Pool, types } = require("pg");
+
+// Return PostgreSQL DATE columns (OID 1082) as exact YYYY-MM-DD strings without timezone conversion
+types.setTypeParser(1082, (str) => str);
 
 const pool = new Pool({
     host: process.env.DB_HOST,
