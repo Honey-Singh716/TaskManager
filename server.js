@@ -7,9 +7,23 @@ const express = require("express");
 
 const app = express();
 
+const ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "https://task-manager-three-gamma-61.vercel.app",
+    // Add any other Vercel preview URLs or custom domains here
+];
+
 app.use(
     cors({
-        origin: "http://localhost:5173"
+        origin: (origin, callback) => {
+            // Allow requests with no origin (e.g. Postman, mobile apps)
+            if (!origin) return callback(null, true);
+            if (ALLOWED_ORIGINS.includes(origin)) {
+                return callback(null, true);
+            }
+            return callback(new Error(`CORS: Origin "${origin}" not allowed`));
+        },
+        credentials: true,
     })
 );
 
