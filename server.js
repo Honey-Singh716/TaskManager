@@ -2,6 +2,7 @@
 const cors = require("cors");
 const pool = require("./db");
 const authRoutes = require("./auth");
+const aiRoutes = require("./ai");
 const authenticateToken = require("./authMiddleware");
 const express = require("express");
 
@@ -320,6 +321,7 @@ app.delete(
 
 // Keep existing authentication routes
 app.use("/auth", authRoutes);
+app.use("/ai", aiRoutes);
 
 // Invalid JSON and other errors
 app.use((err, req, res, next) => {

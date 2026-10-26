@@ -12,6 +12,8 @@ A RESTful Task Manager API built with **Node.js, Express.js, and PostgreSQL**, f
 - **User-specific Access:** Users can access and modify only their own tasks.
 - **Input Validation:** Validate request data before processing it.
 - **PostgreSQL Database:** Store user accounts and tasks persistently.
+- **AI Task Assistant:** Generate authenticated, validated task suggestions with a mock mode
+  for development and optional Groq integration.
 
 ## Tech Stack
 
@@ -24,6 +26,7 @@ A RESTful Task Manager API built with **Node.js, Express.js, and PostgreSQL**, f
 | `bcryptjs` | Password hashing |
 | `jsonwebtoken` | JWT creation and verification |
 | `dotenv` | Environment variable configuration |
+| `groq-sdk` | Optional server-side Groq task planning |
 | Postman | API testing |
 
 ## Project Structure
@@ -32,6 +35,8 @@ A RESTful Task Manager API built with **Node.js, Express.js, and PostgreSQL**, f
 TaskManager/
 ├── auth.js
 ├── authMiddleware.js
+├── ai.js
+├── aiService.js
 ├── db.js
 ├── server.js
 ├── test-db.js
@@ -80,11 +85,21 @@ DB_NAME=your_database_name
 DB_USER=your_database_user
 DB_PASSWORD=your_database_password
 JWT_SECRET=replace_with_a_long_random_secret
+AI_MODE=mock
+AI_MODEL=qwen/qwen3.8-27b
+# Required only when AI_MODE=groq
+GROQ_API_KEY=
 ```
 
 Use your actual local PostgreSQL credentials. Generate a strong, private JWT secret.
 
 **Never commit your `.env` file or share real credentials publicly.**
+
+`AI_MODE=mock` is the safe default and makes no external AI calls. Set
+`AI_MODE=groq` and provide `GROQ_API_KEY` only when you want to use Groq. The
+key is read by the backend only and is never sent to the frontend. `AI_MODEL`
+defaults to `qwen/qwen3.8-27b`; it can be changed to another Groq model
+that supports JSON schema output.
 
 ### 4. Create the database tables
 
@@ -139,6 +154,7 @@ Base URL: `http://localhost:3000`
 | POST | `/tasks` | Create a task | Required |
 | PATCH | `/tasks/:id` | Update a task | Required |
 | DELETE | `/tasks/:id` | Delete a task | Required |
+| POST | `/ai/task-suggestions` | Generate a task preview from natural language | Required |
 
 ## Example Requests
 
@@ -204,6 +220,47 @@ Replace `1` with an actual task ID belonging to the logged-in user.
 `DELETE /tasks/1`
 
 Replace `1` with the task ID you want to delete.
+
+### AI task assistant
+
+After signing in, use the AI Task Assistant panel in the existing React application
+to describe a goal. The backend loads up to 50 of the authenticated user's
+incomplete task titles and dates as planning context, then returns validated JSON:
+
+```json
+{
+  "suggestions": [
+    {
+      "title": "Finish backend authentication",
+      "description": "Complete and verify the authentication flow.",
+      "priority": "high",
+      "estimated_duration_minutes": 90,
+      "scheduled_date": "2026-10-27",
+      "due_date": "2026-10-30"
+    }
+  ],
+  "source": "mock"
+}
+```
+
+Suggestions are only previews. The user must edit or explicitly approve them
+before the frontend calls the existing `POST /tasks` endpoint. Because the current
+schema stores only title and dates, description, priority, and duration remain
+planning metadata until a later schema-backed phase.
+
+Run the backend from the repository root:
+
+```bash
+npm start
+```
+
+Run the existing frontend separately:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
 ## Authentication and Authorization
 
