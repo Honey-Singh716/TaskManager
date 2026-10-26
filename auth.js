@@ -50,10 +50,23 @@ router.post("/signup", async (req, res) => {
             [normalizedEmail, passwordHash]
         );
 
-        // 4. Return the newly created account
+        // 4. Sign a token for the new user
+        const newUser = result.rows[0];
+
+        const token = jwt.sign(
+            { userId: newUser.id },
+            process.env.JWT_SECRET,
+            { expiresIn: "1h" }
+        );
+
+        // 5. Return the newly created account along with the token
         return res.status(201).json({
             message: "Account created successfully",
-            user: result.rows[0]
+            token,
+            user: {
+                id: newUser.id,
+                email: newUser.email
+            }
         });
 
     } catch (error) {
