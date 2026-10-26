@@ -577,7 +577,7 @@ function App() {
 
   if (!token) {
     return (
-      <main className="min-h-screen bg-slate-950 px-4 py-10 text-slate-100">
+      <main className="taskflow-app min-h-screen bg-slate-950 px-4 py-10 text-slate-100">
         <div className="mx-auto flex min-h-[80vh] max-w-md flex-col justify-center">
           <div className="mb-8 text-center">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-500 text-3xl shadow-lg shadow-indigo-500/20">
@@ -692,7 +692,7 @@ function App() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
+    <main className="taskflow-app min-h-screen bg-slate-950 text-slate-100">
       <header className="border-b border-slate-800 bg-slate-950/95">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-5 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
