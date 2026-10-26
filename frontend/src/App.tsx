@@ -10,6 +10,15 @@ type Task = {
   due_date: string | null;
 };
 
+type TaskSuggestion = {
+  title: string;
+  description: string;
+  priority: "low" | "medium" | "high";
+  estimated_duration_minutes: number;
+  scheduled_date: string | null;
+  due_date: string | null;
+};
+
 type AuthResponse = {
   token?: string;
   email?: string;
@@ -144,6 +153,13 @@ function App() {
 
   const [loading, setLoading] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
+  const [assistantPrompt, setAssistantPrompt] = useState("");
+  const [suggestions, setSuggestions] = useState<TaskSuggestion[]>([]);
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantSource, setAssistantSource] = useState<"mock" | "groq" | null>(
+    null
+  );
+  const [approvingSuggestions, setApprovingSuggestions] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -229,6 +245,8 @@ function App() {
     setError("");
     setNotice("");
     setEditingId(null);
+    setSuggestions([]);
+    setAssistantPrompt("");
   };
 
   const addTask = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -280,6 +298,99 @@ function App() {
       setNotice("Task added successfully.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not add task.");
+    }
+  };
+
+  const requestSuggestions = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!assistantPrompt.trim()) {
+      setError("Describe what you want to accomplish first.");
+      return;
+    }
+
+    setAssistantLoading(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const result = await apiRequest(
+        "/ai/task-suggestions",
+        {
+          method: "POST",
+          body: JSON.stringify({ prompt: assistantPrompt.trim() }),
+        },
+        token
+      );
+      setSuggestions(Array.isArray(result.suggestions) ? result.suggestions : []);
+      setAssistantSource(result.source === "groq" ? "groq" : "mock");
+      if (!result.suggestions?.length) {
+        setNotice("The assistant did not find any actionable tasks.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not generate suggestions.");
+    } finally {
+      setAssistantLoading(false);
+    }
+  };
+
+  const updateSuggestion = (
+    index: number,
+    field: "title" | "scheduled_date" | "due_date",
+    value: string
+  ) => {
+    setSuggestions((current) =>
+      current.map((suggestion, suggestionIndex) => {
+        if (suggestionIndex !== index) return suggestion;
+        if (field === "title") return { ...suggestion, title: value };
+        return { ...suggestion, [field]: value || null };
+      })
+    );
+  };
+
+  const approveSuggestions = async () => {
+    if (!suggestions.length) return;
+
+    setApprovingSuggestions(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const createdTasks: Task[] = [];
+      for (const suggestion of suggestions) {
+        const created = await apiRequest(
+          "/tasks",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              title: suggestion.title.trim(),
+              completed: false,
+              scheduled_date: suggestion.scheduled_date,
+              due_date: suggestion.due_date,
+            }),
+          },
+          token
+        );
+        const rawTask = created.task || created;
+        createdTasks.push({
+          ...rawTask,
+          id: Number(rawTask.id),
+          scheduled_date: toDateString(rawTask.scheduled_date),
+          due_date: toDateString(rawTask.due_date),
+          completed: Boolean(rawTask.completed),
+        });
+      }
+
+      setTasks((current) => [...current, ...createdTasks]);
+      setSuggestions([]);
+      setNotice(`${createdTasks.length} approved task${createdTasks.length === 1 ? "" : "s"} added.`);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? `Approval stopped before all tasks were added: ${err.message}`
+          : "Approval could not be completed."
+      );
+    } finally {
+      setApprovingSuggestions(false);
     }
   };
 
@@ -650,6 +761,128 @@ function App() {
             Plan your schedule, track deadlines, and keep moving forward.
           </p>
         </div>
+
+        <section className="mb-8 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-wide text-indigo-300">
+                AI task assistant
+              </p>
+              <h3 className="mt-1 text-xl font-bold">Turn a goal into a task plan</h3>
+              <p className="mt-1 max-w-2xl text-sm text-slate-400">
+                Describe your goal in plain language. Review and edit the proposed tasks
+                before anything is added to your workspace.
+              </p>
+            </div>
+            {assistantSource && (
+              <span className="rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1 text-xs text-slate-400">
+                {assistantSource === "mock" ? "Mock assistant" : "Groq assistant"}
+              </span>
+            )}
+          </div>
+
+          <form onSubmit={requestSuggestions} className="mt-5 flex flex-col gap-3 sm:flex-row">
+            <textarea
+              value={assistantPrompt}
+              onChange={(event) => setAssistantPrompt(event.target.value)}
+              maxLength={4000}
+              rows={3}
+              placeholder="I need to finish backend authentication by Friday and prepare for interviews over the weekend."
+              className="min-h-20 flex-1 resize-y rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm outline-none focus:border-indigo-400"
+            />
+            <button
+              type="submit"
+              disabled={assistantLoading}
+              className="rounded-xl bg-indigo-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60 sm:self-end"
+            >
+              {assistantLoading ? "Thinking..." : "Suggest tasks"}
+            </button>
+          </form>
+
+          {suggestions.length > 0 && (
+            <div className="mt-5 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="font-semibold text-slate-100">Review suggestions</h4>
+                  <p className="text-xs text-slate-500">
+                    Duration, priority, and descriptions are planning guidance; the existing
+                    task API stores title and dates.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSuggestions([])}
+                    disabled={approvingSuggestions}
+                    className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:text-white"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void approveSuggestions()}
+                    disabled={approvingSuggestions}
+                    className="rounded-lg bg-emerald-500 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60"
+                  >
+                    {approvingSuggestions ? "Adding..." : "Approve all"}
+                  </button>
+                </div>
+              </div>
+
+              {suggestions.map((suggestion, index) => (
+                <article
+                  key={`${suggestion.title}-${index}`}
+                  className="rounded-xl border border-slate-800 bg-slate-950/70 p-4"
+                >
+                  <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-400">Task title</label>
+                      <input
+                        value={suggestion.title}
+                        maxLength={200}
+                        onChange={(event) => updateSuggestion(index, "title", event.target.value)}
+                        className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                      />
+                    </div>
+                    <div className="flex items-end gap-2 text-xs">
+                      <span className="rounded-md bg-indigo-500/15 px-2 py-1 text-indigo-300">
+                        {suggestion.priority} priority
+                      </span>
+                      <span className="rounded-md bg-slate-800 px-2 py-1 text-slate-400">
+                        {suggestion.estimated_duration_minutes} min
+                      </span>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm text-slate-400">{suggestion.description}</p>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="text-xs text-slate-400">
+                      Scheduled date
+                      <input
+                        type="date"
+                        value={suggestion.scheduled_date || ""}
+                        onChange={(event) =>
+                          updateSuggestion(index, "scheduled_date", event.target.value)
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-2 text-sm text-slate-100 outline-none focus:border-indigo-400"
+                      />
+                    </label>
+                    <label className="text-xs text-slate-400">
+                      Due date
+                      <input
+                        type="date"
+                        value={suggestion.due_date || ""}
+                        onChange={(event) =>
+                          updateSuggestion(index, "due_date", event.target.value)
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-2 text-sm text-slate-100 outline-none focus:border-indigo-400"
+                      />
+                    </label>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
