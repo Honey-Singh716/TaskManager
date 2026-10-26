@@ -85,6 +85,7 @@ DB_NAME=your_database_name
 DB_USER=your_database_user
 DB_PASSWORD=your_database_password
 JWT_SECRET=replace_with_a_long_random_secret
+FRONTEND_ORIGINS=https://task-manager-honey-singh716s-projects.vercel.app
 AI_MODE=mock
 AI_MODEL=qwen/qwen3.8-27b
 # Required only when AI_MODE=groq
@@ -100,6 +101,10 @@ Use your actual local PostgreSQL credentials. Generate a strong, private JWT sec
 key is read by the backend only and is never sent to the frontend. `AI_MODEL`
 defaults to `qwen/qwen3.8-27b`; it can be changed to another Groq model
 that supports JSON schema output.
+
+`FRONTEND_ORIGINS` is a comma-separated list of browser origins allowed to call
+the backend. Add the exact Vercel production URL here when it changes; do not
+use a wildcard for authenticated requests.
 
 ### 4. Create the database tables
 

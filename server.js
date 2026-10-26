@@ -8,10 +8,16 @@ const express = require("express");
 
 const app = express();
 
+const configuredOrigins = (process.env.FRONTEND_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
 const ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "https://task-manager-three-gamma-61.vercel.app",
-    // Add any other Vercel preview URLs or custom domains here
+    "https://task-manager-honey-singh716s-projects.vercel.app",
+    ...configuredOrigins
 ];
 
 app.use(
