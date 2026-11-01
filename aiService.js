@@ -21,7 +21,19 @@ function readJson(text) {
         throw new Error("AI response did not contain text");
     }
 
-    const cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    let cleaned = text.trim();
+    // Strip thinking tags if present from reasoning models
+    cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    // Strip markdown code fences
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+
+    // Extract outer JSON object or array if extra preamble/postamble exists
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+    }
+
     try {
         return JSON.parse(cleaned);
     } catch (error) {
@@ -33,50 +45,68 @@ function readJson(text) {
 }
 
 function validateSuggestions(value) {
-    if (!value || !Array.isArray(value.suggestions) ||
-        value.suggestions.length > MAX_SUGGESTIONS) {
+    if (!value || typeof value !== "object") {
+        const error = new Error("AI response was not a valid object");
+        error.code = "AI_INVALID_RESPONSE";
+        throw error;
+    }
+
+    const rawList = Array.isArray(value)
+        ? value
+        : Array.isArray(value.suggestions)
+        ? value.suggestions
+        : [];
+
+    if (!rawList.length) {
         const error = new Error("AI response did not contain a valid suggestions array");
         error.code = "AI_INVALID_RESPONSE";
         throw error;
     }
 
-    const suggestions = value.suggestions.map((suggestion) => {
+    const suggestions = rawList.slice(0, MAX_SUGGESTIONS).map((suggestion) => {
         if (!suggestion || typeof suggestion !== "object") {
-            throw new Error("AI returned an invalid task suggestion");
+            return null;
         }
 
         const title = typeof suggestion.title === "string" ? suggestion.title.trim() : "";
-        const description = typeof suggestion.description === "string"
-            ? suggestion.description.trim()
-            : "";
-        const priority = suggestion.priority;
-        const estimatedDurationMinutes = suggestion.estimated_duration_minutes;
-        const scheduledDate = suggestion.scheduled_date ?? null;
-        const dueDate = suggestion.due_date ?? null;
+        if (!title) return null;
 
-        if (!title || title.length > 200 ||
-            description.length > 1000 ||
-            !PRIORITIES.has(priority) ||
-            !Number.isInteger(estimatedDurationMinutes) ||
-            estimatedDurationMinutes < 5 ||
-            estimatedDurationMinutes > 480 ||
-            (scheduledDate !== null && !isValidDate(scheduledDate)) ||
-            (dueDate !== null && !isValidDate(dueDate)) ||
-            (scheduledDate && dueDate && dueDate < scheduledDate)) {
-            const error = new Error("AI returned task fields outside the allowed limits");
-            error.code = "AI_INVALID_RESPONSE";
-            throw error;
+        const description = typeof suggestion.description === "string"
+            ? suggestion.description.trim().slice(0, 1000)
+            : "";
+
+        const priority = PRIORITIES.has(suggestion.priority) ? suggestion.priority : "medium";
+
+        let estimatedDurationMinutes = Number.isInteger(suggestion.estimated_duration_minutes)
+            ? suggestion.estimated_duration_minutes
+            : 30;
+        estimatedDurationMinutes = Math.max(5, Math.min(480, estimatedDurationMinutes));
+
+        let scheduledDate = isValidDate(suggestion.scheduled_date) ? suggestion.scheduled_date : null;
+        let dueDate = isValidDate(suggestion.due_date) ? suggestion.due_date : null;
+
+        // If both dates exist and dueDate < scheduledDate, swap them so date range is valid
+        if (scheduledDate && dueDate && dueDate < scheduledDate) {
+            const temp = scheduledDate;
+            scheduledDate = dueDate;
+            dueDate = temp;
         }
 
         return {
-            title,
+            title: title.slice(0, 200),
             description,
             priority,
             estimated_duration_minutes: estimatedDurationMinutes,
             scheduled_date: scheduledDate,
             due_date: dueDate
         };
-    });
+    }).filter(Boolean);
+
+    if (suggestions.length === 0) {
+        const error = new Error("AI returned no valid tasks");
+        error.code = "AI_INVALID_RESPONSE";
+        throw error;
+    }
 
     return { suggestions };
 }
@@ -156,30 +186,55 @@ async function generateTaskSuggestions({ prompt, tasks }) {
         ).join("\n")
         : "No existing incomplete tasks.";
     const today = new Date().toISOString().slice(0, 10);
+    const model = process.env.AI_MODEL || "qwen/qwen3.8-27b";
 
     try {
-        const response = await ai.chat.completions.create({
-            model: process.env.AI_MODEL || "qwen/qwen3.8-27b",
-            temperature: 0.2,
-            messages: [{
-                role: "user",
-                content: [
-                    "You are a task planning assistant. Return only JSON matching the provided schema.",
-                    `Today is ${today}. Create actionable task suggestions for this request: ${prompt}`,
-                    "Existing incomplete tasks (use only as context and do not duplicate them):",
-                    taskContext,
-                    `JSON schema: ${JSON.stringify(responseSchema)}`
-                ].join("\n\n")
-            }],
-            response_format: {
-                type: "json_schema",
-                json_schema: {
-                    name: "task_suggestions",
-                    strict: true,
-                    schema: responseSchema
+        let response;
+        try {
+            response = await ai.chat.completions.create({
+                model,
+                temperature: 0.2,
+                messages: [{
+                    role: "user",
+                    content: [
+                        "You are a task planning assistant. Return only JSON matching the provided schema.",
+                        `Today is ${today}. Create actionable task suggestions for this request: ${prompt}`,
+                        "Existing incomplete tasks (use only as context and do not duplicate them):",
+                        taskContext,
+                        `JSON schema: ${JSON.stringify(responseSchema)}`
+                    ].join("\n\n")
+                }],
+                response_format: {
+                    type: "json_schema",
+                    json_schema: {
+                        name: "task_suggestions",
+                        strict: true,
+                        schema: responseSchema
+                    }
                 }
+            });
+        } catch (createError) {
+            const errorMsg = String(createError.message || "").toLowerCase();
+            // If the model does not support json_schema, fallback to json_object
+            if (errorMsg.includes("json_schema") || errorMsg.includes("response_format")) {
+                response = await ai.chat.completions.create({
+                    model,
+                    temperature: 0.2,
+                    messages: [{
+                        role: "user",
+                        content: [
+                            "You are a task planning assistant. Return only valid JSON with a 'suggestions' array matching this schema: " + JSON.stringify(responseSchema),
+                            `Today is ${today}. Create actionable task suggestions for this request: ${prompt}`,
+                            "Existing incomplete tasks (use only as context and do not duplicate them):",
+                            taskContext
+                        ].join("\n\n")
+                    }],
+                    response_format: { type: "json_object" }
+                });
+            } else {
+                throw createError;
             }
-        });
+        }
 
         return {
             ...validateSuggestions(readJson(response.choices?.[0]?.message?.content)),

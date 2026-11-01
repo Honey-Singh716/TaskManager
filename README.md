@@ -122,6 +122,8 @@ CREATE TABLE tasks (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     title VARCHAR(200) NOT NULL,
     completed BOOLEAN NOT NULL DEFAULT FALSE,
+    scheduled_date DATE,
+    due_date DATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     user_id BIGINT NOT NULL REFERENCES users(id)
 );

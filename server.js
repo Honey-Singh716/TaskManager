@@ -8,6 +8,16 @@ const express = require("express");
 
 const app = express();
 
+// Normalize /api prefix so routes work both directly and when routed via /api (e.g. Vercel)
+app.use((req, res, next) => {
+    if (req.url === "/api") {
+        req.url = "/";
+    } else if (req.url.startsWith("/api/")) {
+        req.url = req.url.slice(4);
+    }
+    next();
+});
+
 const configuredOrigins = (process.env.FRONTEND_ORIGINS || "")
     .split(",")
     .map((origin) => origin.trim())
@@ -15,20 +25,38 @@ const configuredOrigins = (process.env.FRONTEND_ORIGINS || "")
 
 const ALLOWED_ORIGINS = [
     "http://localhost:5173",
+    "http://localhost:4173",
+    "http://localhost:3000",
     "https://task-manager-three-gamma-61.vercel.app",
     "https://task-manager-honey-singh716s-projects.vercel.app",
     ...configuredOrigins
 ];
 
+function isOriginAllowed(origin) {
+    if (!origin) return true; // Allow non-browser requests (Postman, mobile apps, curl)
+    if (ALLOWED_ORIGINS.includes(origin)) return true;
+    if (configuredOrigins.includes("*")) return true;
+
+    // Allow any localhost or 127.0.0.1 port
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+        return true;
+    }
+
+    // Allow any task-manager preview or production deployment on Vercel
+    if (/^https:\/\/task-manager[a-z0-9-]*\.vercel\.app$/i.test(origin)) {
+        return true;
+    }
+
+    return false;
+}
+
 app.use(
     cors({
         origin: (origin, callback) => {
-            // Allow requests with no origin (e.g. Postman, mobile apps)
-            if (!origin) return callback(null, true);
-            if (ALLOWED_ORIGINS.includes(origin)) {
+            if (isOriginAllowed(origin)) {
                 return callback(null, true);
             }
-            return callback(new Error(`CORS: Origin "${origin}" not allowed`));
+            return callback(null, false);
         },
         credentials: true,
     })
@@ -108,7 +136,7 @@ app.get("/tasks", authenticateToken, async (req, res) => {
 // CREATE a task
 app.post("/tasks", authenticateToken, async (req, res) => {
     try {
-        const {
+        let {
             title,
             completed,
             scheduled_date,
@@ -135,6 +163,10 @@ app.post("/tasks", authenticateToken, async (req, res) => {
                 error: "Completed must be true or false"
             });
         }
+
+        // Treat empty string as null
+        if (scheduled_date === "") scheduled_date = null;
+        if (due_date === "") due_date = null;
 
         if (
             scheduled_date !== undefined &&
@@ -183,7 +215,7 @@ app.patch(
         try {
             const { id } = req.params;
 
-            const {
+            let {
                 title,
                 completed,
                 scheduled_date,
@@ -225,6 +257,8 @@ app.patch(
             }
 
             if (scheduled_date !== undefined) {
+                if (scheduled_date === "") scheduled_date = null;
+
                 if (
                     !validateOptionalDate(
                         scheduled_date,
@@ -240,6 +274,8 @@ app.patch(
             }
 
             if (due_date !== undefined) {
+                if (due_date === "") due_date = null;
+
                 if (
                     !validateOptionalDate(due_date, "Due date", res)
                 ) {
@@ -339,8 +375,9 @@ app.use((err, req, res, next) => {
         });
     }
 
-    return res.status(500).json({
-        error: "Internal server error"
+    const statusCode = err.status || err.statusCode || 500;
+    return res.status(statusCode).json({
+        error: err.message || "Internal server error"
     });
 });
 
@@ -353,6 +390,10 @@ app.use((req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
-});
+if (require.main === module) {
+    app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on port ${PORT}`);
+    });
+}
+
+module.exports = app;

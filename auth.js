@@ -8,6 +8,13 @@ const router = express.Router();
 
 router.post("/signup", async (req, res) => {
     try {
+        if (!process.env.JWT_SECRET) {
+            console.error("JWT_SECRET is not configured");
+            return res.status(500).json({
+                error: "Server configuration error: JWT_SECRET is not set"
+            });
+        }
+
         const { email, password } = req.body ?? {};
 
         // 1. Validate input
@@ -88,6 +95,13 @@ router.post("/signup", async (req, res) => {
 
 router.post("/login", async (req, res) => {
     try {
+        if (!process.env.JWT_SECRET) {
+            console.error("JWT_SECRET is not configured");
+            return res.status(500).json({
+                error: "Server configuration error: JWT_SECRET is not set"
+            });
+        }
+
         const { email, password } = req.body ?? {};
 
         if (

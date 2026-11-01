@@ -1,6 +1,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiRequest } from "./api";
+import { apiRequest, ApiError } from "./api";
 
 type Task = {
   id: number;
@@ -163,11 +163,25 @@ function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
+  const handleSessionExpired = useCallback(() => {
+    sessionStorage.removeItem("token");
+    sessionStorage.removeItem("userEmail");
+    setToken("");
+    setUserEmail("");
+    setTasks([]);
+    setEditingId(null);
+    setSuggestions([]);
+    setNotice("");
+    setError("Your session has expired. Please log in again.");
+  }, []);
+
   const loadTasks = useCallback(async () => {
     if (!token) return;
 
-    setLoading(true);
-    setError("");
+    queueMicrotask(() => {
+      setLoading(true);
+      setError("");
+    });
 
     try {
       const data = await apiRequest("/tasks", {}, token);
@@ -181,11 +195,15 @@ function App() {
       }));
       setTasks(normalizedTasks);
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       setError(err instanceof Error ? err.message : "Could not load tasks.");
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, handleSessionExpired]);
 
   useEffect(() => {
     if (token) {
@@ -297,6 +315,10 @@ function App() {
       }
       setNotice("Task added successfully.");
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       setError(err instanceof Error ? err.message : "Could not add task.");
     }
   };
@@ -327,6 +349,10 @@ function App() {
         setNotice("The assistant did not find any actionable tasks.");
       }
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       setError(err instanceof Error ? err.message : "Could not generate suggestions.");
     } finally {
       setAssistantLoading(false);
@@ -354,9 +380,12 @@ function App() {
     setError("");
     setNotice("");
 
+    const createdTasks: Task[] = [];
+    const remainingSuggestions = [...suggestions];
+
     try {
-      const createdTasks: Task[] = [];
-      for (const suggestion of suggestions) {
+      while (remainingSuggestions.length > 0) {
+        const suggestion = remainingSuggestions[0];
         const created = await apiRequest(
           "/tasks",
           {
@@ -378,12 +407,23 @@ function App() {
           due_date: toDateString(rawTask.due_date),
           completed: Boolean(rawTask.completed),
         });
+        remainingSuggestions.shift();
       }
 
       setTasks((current) => [...current, ...createdTasks]);
       setSuggestions([]);
-      setNotice(`${createdTasks.length} approved task${createdTasks.length === 1 ? "" : "s"} added.`);
+      setNotice(
+        `${createdTasks.length} approved task${createdTasks.length === 1 ? "" : "s"} added.`
+      );
     } catch (err) {
+      if (createdTasks.length > 0) {
+        setTasks((current) => [...current, ...createdTasks]);
+        setSuggestions(remainingSuggestions);
+      }
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       setError(
         err instanceof Error
           ? `Approval stopped before all tasks were added: ${err.message}`
@@ -445,6 +485,10 @@ function App() {
       setEditingId(null);
       setNotice("Task updated successfully.");
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       setError(err instanceof Error ? err.message : "Could not update task.");
     }
   };
@@ -486,6 +530,10 @@ function App() {
         setNotice(`Task "${task.title}" marked as pending. Restored to calendar.`);
       }
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       setError(
         err instanceof Error ? err.message : "Could not update task status."
       );
@@ -505,6 +553,10 @@ function App() {
       if (editingId === id) setEditingId(null);
       setNotice("Task deleted successfully.");
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        handleSessionExpired();
+        return;
+      }
       setError(err instanceof Error ? err.message : "Could not delete task.");
     }
   };
@@ -648,18 +700,22 @@ function App() {
 
               <div>
                 <label className="mb-2 block text-sm font-medium text-slate-300">
-                  Password
+                  Password {authMode === "signup" && <span className="text-xs text-slate-400 font-normal">(min. 8 characters)</span>}
                 </label>
                 <input
                   type="password"
                   required
-                  minLength={6}
+                  minLength={authMode === "signup" ? 8 : 1}
                   autoComplete={
                     authMode === "login" ? "current-password" : "new-password"
                   }
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Enter your password"
+                  placeholder={
+                    authMode === "signup"
+                      ? "Create a password (min. 8 characters)"
+                      : "Enter your password"
+                  }
                   className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20"
                 />
               </div>
@@ -998,8 +1054,6 @@ function App() {
                   </span>
                 </div>
               </div>
-              <p className="mt-2.5 text-xs text-slate-400 leading-relaxed">
-              </p>
             </div>
 
             <div className="grid grid-cols-7 gap-1.5 text-center">
@@ -1088,8 +1142,16 @@ function App() {
                     className={`group relative flex min-h-[72px] sm:min-h-[82px] flex-col items-center justify-between rounded-xl border p-1 sm:p-1.5 transition ${cellStyle} ${selectionClass}`}
                   >
                     <div className="flex w-full items-center justify-between px-0.5">
-                      <span className="text-xs sm:text-sm font-bold">{day}</span>
-                      {isToday && !statusText && (
+                      <span className="text-xs sm:text-sm font-bold flex items-center gap-1">
+                        {day}
+                        {isToday && (
+                          <span
+                            className="inline-block h-1.5 w-1.5 rounded-full bg-indigo-400"
+                            title="Today"
+                          />
+                        )}
+                      </span>
+                      {isToday && (
                         <span className="text-[9px] font-semibold uppercase text-indigo-400">
                           Today
                         </span>
