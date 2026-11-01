@@ -8,6 +8,18 @@ const express = require("express");
 
 const app = express();
 
+// Security Headers middleware
+app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    if (process.env.NODE_ENV === "production" || req.secure || req.headers["x-forwarded-proto"] === "https") {
+        res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+    next();
+});
+
 // Normalize /api prefix so routes work both directly and when routed via /api (e.g. Vercel)
 app.use((req, res, next) => {
     if (req.url === "/api") {
@@ -17,6 +29,50 @@ app.use((req, res, next) => {
     }
     next();
 });
+
+// Zero-dependency in-memory rate limiting for authentication endpoints
+const authAttempts = new Map();
+
+function authRateLimiter(maxAttempts = 15, windowMs = 15 * 60 * 1000) {
+    return (req, res, next) => {
+        if (process.env.TEST_NO_RATE_LIMIT === "true") return next();
+
+        const forwarded = req.headers["x-forwarded-for"];
+        const clientIp = (typeof forwarded === "string" ? forwarded.split(",")[0].trim() : null) ||
+                         req.socket?.remoteAddress ||
+                         "unknown";
+        const now = Date.now();
+        const record = authAttempts.get(clientIp);
+
+        if (!record || now - record.startTime > windowMs) {
+            authAttempts.set(clientIp, { count: 1, startTime: now });
+            return next();
+        }
+
+        if (record.count >= maxAttempts) {
+            const retryAfterSec = Math.ceil((record.startTime + windowMs - now) / 1000);
+            res.setHeader("Retry-After", retryAfterSec);
+            return res.status(429).json({
+                error: `Too many authentication attempts. Please try again in ${Math.ceil(retryAfterSec / 60)} minutes.`
+            });
+        }
+
+        record.count += 1;
+        return next();
+    };
+}
+
+const cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [ip, record] of authAttempts.entries()) {
+        if (now - record.startTime > 15 * 60 * 1000) {
+            authAttempts.delete(ip);
+        }
+    }
+}, 5 * 60 * 1000);
+if (cleanupInterval && typeof cleanupInterval.unref === "function") {
+    cleanupInterval.unref();
+}
 
 const configuredOrigins = (process.env.FRONTEND_ORIGINS || "")
     .split(",")
@@ -361,8 +417,8 @@ app.delete(
     }
 );
 
-// Keep existing authentication routes
-app.use("/auth", authRoutes);
+// Apply rate limiting to authentication routes
+app.use("/auth", authRateLimiter(), authRoutes);
 app.use("/ai", aiRoutes);
 
 // Invalid JSON and other errors
@@ -397,3 +453,4 @@ if (require.main === module) {
 }
 
 module.exports = app;
+module.exports.authRateLimiter = authRateLimiter;

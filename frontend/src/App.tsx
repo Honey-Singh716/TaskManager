@@ -739,9 +739,14 @@ function App() {
               </button>
             </form>
           </section>
-          <p className="mt-6 text-center text-xs text-slate-500">
-            Your tasks are private to your account.
-          </p>
+          <div className="mt-6 space-y-2 text-center text-xs text-slate-400">
+            <p>
+              Your tasks and schedule are private to your account.
+            </p>
+            <p className="text-[11px] text-slate-500">
+              TaskFlow is an independent productivity web application. Passwords are securely hashed with bcrypt and never stored in plain text.
+            </p>
+          </div>
         </div>
       </main>
     );
